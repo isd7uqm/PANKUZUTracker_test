@@ -13,7 +13,7 @@ CORS(app)
 
 # --- 配置 OpenAI API 客户端 ---
 client = openai.OpenAI(
-    api_key="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"
+    api_key="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"
 )
 
 # --- 算法与辅助函数 ---
