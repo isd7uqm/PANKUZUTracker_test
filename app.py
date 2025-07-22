@@ -1,20 +1,32 @@
 # ===============================================================
-# 文件名: app.py (模型测试版)
+# 文件名: app.py (使用环境变量)
 # ===============================================================
 import os
 import openai
 import json
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
+# 1. 重新导入 python-dotenv 库
+from dotenv import load_dotenv
 
 # --- 初始化 ---
+# 2. 在程序开始时加载 .env 文件 (这主要用于本地开发)
+# 在 Render 上，环境变量会由平台直接提供
+load_dotenv()
+
 app = Flask(__name__, static_folder='static')
 CORS(app) 
 
 # --- 配置 OpenAI API 客户端 ---
-client = openai.OpenAI(
-    api_key="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"
-)
+# 3. 从环境变量中安全地读取 API 密钥
+api_key = os.getenv("OPENAI_API_KEY")
+
+# 增加一个检查，如果密钥不存在则打印错误并退出
+if not api_key:
+    raise ValueError("OpenAI APIキーが設定されていません。環境変数 'OPENAI_API_KEY' を設定してください。")
+
+client = openai.OpenAI(api_key=api_key)
+
 
 # --- 算法与辅助函数 ---
 def classify_movement(accel_data):
@@ -69,10 +81,9 @@ def analyze_data():
         これらの情報に基づき、最も可能性の高い場所トップ3を、確率と共に報告してください。
         """
 
-        print("[DEBUG] Calling OpenAI API for analysis with model gpt-3.5-turbo...")
+        print("[DEBUG] Calling OpenAI API for analysis...")
         chat_completion = client.chat.completions.create(
-            # --- 调试修改：使用 gpt-3.5-turbo 进行测试 ---
-            model="gpt-3.5-turbo",
+            model="gpt-3.5-turbo", # 使用 gpt-3.5-turbo 进行测试
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
@@ -108,10 +119,9 @@ def get_suggestion():
         ユーザーがすぐに行動に移せるような、明確で簡潔な指示リストを作成してください。
         """
         
-        print("[DEBUG] Calling OpenAI API for suggestion with model gpt-3.5-turbo...")
+        print("[DEBUG] Calling OpenAI API for suggestion...")
         chat_completion = client.chat.completions.create(
-            # --- 调试修改：使用 gpt-3.5-turbo 进行测试 ---
-            model="gpt-3.5-turbo",
+            model="gpt-3.5-turbo", # 使用 gpt-3.5-turbo 进行测试
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
@@ -126,9 +136,9 @@ def get_suggestion():
 
 @app.route('/')
 def serve_index():
-    """当用户访问根URL时，返回 index.html 文件。"""
     return send_from_directory(app.static_folder, 'index.html')
 
 # --- 启动服务器 ---
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000, debug=False)
+
