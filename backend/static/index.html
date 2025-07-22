@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>スマートデバイス・トラッカー (フロントエンド/バックエンド分離版)</title>
+
+  <!-- ----------------------------  CSS  ---------------------------- -->
+  <style>
+      :root {
+          --primary-color-start: #667eea;
+          --primary-color-end: #764ba2;
+          --secondary-color-start: #48bb78;
+          --secondary-color-end: #38a169;
+          --header-color-start: #4facfe;
+          --header-color-end: #00f2fe;
+          --bg-light: #f8f9ff;
+          --border-light: #e3e8ff;
+          --text-dark: #2d3748;
+          --text-light: #fff;
+      }
+      *{margin:0;padding:0;box-sizing:border-box;}
+      body{
+          font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'Noto Sans',sans-serif,'Apple Color Emoji','Segoe UI Emoji','Segoe UI Symbol','Noto Color Emoji';
+          background:linear-gradient(135deg, var(--primary-color-start) 0%, var(--primary-color-end) 100%);
+          min-height:100vh;padding:1rem;
+      }
+      .container{
+          max-width:900px;margin:0 auto;background:var(--text-light);border-radius:15px;
+          box-shadow:0 20px 40px rgba(0,0,0,.1);overflow:hidden;
+      }
+      .header{
+          background:linear-gradient(135deg, var(--header-color-start) 0%, var(--header-color-end) 100%);
+          color:var(--text-light);padding:30px;text-align:center;
+      }
+      .header h1{font-size:2.2rem;margin-bottom:10px;}
+      .content{padding:20px;}
+      
+      #grid-container {
+          position: relative;
+          width: 100%;
+          height: 45vh;
+          background-color: #fdfdfd;
+          border-radius: 12px;
+          margin-bottom: 20px;
+          border: 3px solid var(--border-light);
+          box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+      }
+      #pathGrid {
+          width: 100%;
+          height: 100%;
+          cursor: crosshair;
+      }
+      #grid-tooltip {
+          display: none;
+          position: absolute;
+          background: rgba(0, 0, 0, 0.75);
+          color: white;
+          padding: 8px 12px;
+          border-radius: 6px;
+          font-size: 0.85rem;
+          pointer-events: none;
+          white-space: nowrap;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+          z-index: 10;
+      }
+      
+      .ai-section {
+          background:linear-gradient(135deg,#ffecd2 0%,#fcb69f 100%);
+          border-radius:12px;padding:25px;margin-bottom:20px;border-left:5px solid #ed8936;
+      }
+      .ai-section h3 { color:#744210; margin-bottom:15px; display:flex; align-items:center; font-size: 1.5rem; }
+      .ai-section h3::before { content:"🤖"; margin-right:10px; }
+      #aiContent {
+          background-color: rgba(255,255,255,0.5);
+          padding: 15px;
+          border-radius: 8px;
+          min-height: 50px;
+          color: #5c4033;
+          line-height: 1.6;
+      }
+
+      .controls-panel {
+          background: var(--bg-light);
+          padding: 15px;
+          border-radius: 12px;
+          margin-bottom: 20px;
+          text-align: center;
+      }
+
+      .btn{
+          background:linear-gradient(135deg, var(--primary-color-start) 0%, var(--primary-color-end) 100%);
+          color:var(--text-light);border:none;padding:10px 20px;border-radius:8px;
+          cursor:pointer;font-size:.9rem;font-weight:600;transition:.3s;margin:5px;
+      }
+      .btn:hover{transform:translateY(-2px);box-shadow:0 5px 15px rgba(0,0,0,.2);}
+      .btn:disabled{background: #ccc; cursor: not-allowed; transform: none; box-shadow: none;}
+      .btn.secondary{background:linear-gradient(135deg, var(--secondary-color-start) 0%, var(--secondary-color-end) 100%);}
+      .btn.danger{background:linear-gradient(135deg,#f56565 0%,#e53e3e 100%);}
+      
+      .feature-grid{
+          display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
+          gap:20px;
+      }
+      .feature-card{
+          background:var(--bg-light);border:2px solid var(--border-light);border-radius:12px;
+          padding:25px;transition:.3s;
+      }
+      .feature-card h3{color:#4c51bf;margin-bottom:15px;font-size:1.3rem;}
+      
+      .sensor-value{
+          font-family:'Courier New',monospace;background:#edf2f7;padding:5px 10px;
+          border-radius:4px;display:inline-block;margin:2px;
+      }
+      .status{padding:15px;border-radius:8px;margin:15px 0;font-weight:500;}
+      .status.info{background:#bee3f8;color:#2c5282;}
+      .status.error{background:#fed7d7;color:#742a2a;}
+      .status.success{background:#c6f6d5;color:#22543d;}
+
+      #userIdDisplay { font-size: 0.8rem; word-break: break-all; margin-top: 10px; color: #334155;}
+  </style>
+</head>
+<body>
+  <div class="container">
+      <div class="header">
+          <h1>📉 スマートパス・トラッカー</h1>
+          <p>AI駆動のデバイス発見システム (フロントエンド/バックエンド分離版)</p>
+      </div>
+
+      <div class="content">
+          <div id="grid-container">
+              <canvas id="pathGrid"></canvas>
+              <div id="grid-tooltip"></div>
+          </div>
+
+          <div class="controls-panel">
+              <div id="permissionRequestUI" style="display: none;">
+                  <p style="margin-bottom: 10px;">あなたの経路を追跡するために、デバイスのセンサーへのアクセス許可が必要です。</p>
+                  <button class="btn secondary" style="font-size: 1.1rem; padding: 12px 28px;" onclick="requestPermissionsAndStart()">許可して開始</button>
+              </div>
+              <div id="mainControls" style="display: none;">
+                  <button class="btn danger" onclick="stopSensing()">計測停止</button>
+                  <button class="btn" onclick="exportCSV()">CSVエクスポート</button>
+                  <button class="btn secondary" onclick="exportJSON()">JSONエクスポート</button>
+              </div>
+          </div>
+
+          <div class="ai-section">
+              <h3>AI分析・提案システム</h3>
+              <div id="aiContent">十分なデータが収集されると、AIの分析と提案がここに表示されます...</div>
+              <div style="text-align: center; margin-top: 15px;">
+                  <button class="btn" id="aiAnalysisBtn" onclick="getAIAnalysis()">AI分析を実行</button>
+                  <button class="btn secondary" id="aiSuggestBtn" onclick="getSearchSuggestions()">探索提案を取得</button>
+              </div>
+          </div>
+          
+          <div id="status" class="status info" style="display:none;"></div>
+
+          <div class="feature-grid">
+              <div class="feature-card">
+                  <h3>🧠 データ詳細</h3>
+                  <p>リアルタイムのセンサーデータと認識情報を表示</p>
+                  <div id="accelerometer">加速度: 未検出</div>
+                  <div id="location" style="margin-top: 5px;">位置: 未検出</div>
+                  <div id="movementPattern" style="margin-top: 5px;">移動パターン: 不明</div>
+              </div>
+
+              <div class="feature-card">
+                  <h3>🌐 接続情報</h3>
+                  <p>セッション識別情報</p>
+                  <div id="userIdDisplay" style="margin-top: 5px;">ユーザーID: 未生成</div>
+                  <div id="recordCount" style="margin-top: 5px;">ローカル記録数: 0</div>
+              </div>
+          </div>
+      </div>
+  </div>
+
+  <script>
+    // --- グローバル変数 ---
+    let sensorData = { accelerometer:{x:0,y:0,z:0}, location:{lat:0,lng:0,accuracy:0} };
+    let sensorHistory = [];
+    const HISTORY_LIMIT = 100;
+    let sensingActive = false;
+    let geoWatchId = null;
+    let userId = null;
+    
+    // バックエンドサーバーのアドレス
+    const BACKEND_URL = '';
+
+    // --- グリッドキャンバス変数 ---
+    let canvas, ctx, gridOrigin = null, gridPoints = [];
+    const METERS_PER_PIXEL = 1;
+
+    /* ---------- Grid Canvas Logic (変更なし) ---------- */
+    function initGrid() {
+        canvas = document.getElementById('pathGrid');
+        ctx = canvas.getContext('2d');
+        const container = document.getElementById('grid-container');
+        canvas.width = container.clientWidth;
+        canvas.height = container.clientHeight;
+        canvas.addEventListener('mousemove', handleGridHover);
+        drawGrid();
+        updateGridPath();
+    }
+
+    function drawGrid() {
+        if (!ctx) return;
+        const width = canvas.width;
+        const height = canvas.height;
+        ctx.clearRect(0, 0, width, height);
+        ctx.strokeStyle = '#e0e0e0';
+        ctx.lineWidth = 0.5;
+        for (let x = 0; x < width; x += 20) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke(); }
+        for (let y = 0; y < height; y += 20) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke(); }
+        ctx.strokeStyle = '#cccccc';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(width / 2, 0); ctx.lineTo(width / 2, height);
+        ctx.moveTo(0, height / 2); ctx.lineTo(width, height);
+        ctx.stroke();
+    }
+
+    function updateGridPath() {
+        if (!ctx) return;
+        drawGrid();
+        gridPoints = [];
+        if (sensorHistory.length === 0) return;
+        if (!gridOrigin) {
+            const firstValidLoc = sensorHistory.find(r => r.loc && r.loc.lat !== 0);
+            if (firstValidLoc) gridOrigin = { lat: parseFloat(firstValidLoc.loc.lat), lng: parseFloat(firstValidLoc.loc.lng) };
+            else return;
+        }
+        const centerX = canvas.width / 2;
+        const centerY = canvas.height / 2;
+        ctx.strokeStyle = '#FF0000';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        let firstPoint = true;
+        sensorHistory.forEach(record => {
+            if (record.loc && record.loc.lat !== 0) {
+                const lat = parseFloat(record.loc.lat);
+                const lng = parseFloat(record.loc.lng);
+                const metersY = (lat - gridOrigin.lat) * 111132.954;
+                const metersX = (lng - gridOrigin.lng) * 111320 * Math.cos(gridOrigin.lat * Math.PI / 180);
+                const canvasX = centerX + metersX / METERS_PER_PIXEL;
+                const canvasY = centerY - metersY / METERS_PER_PIXEL;
+                if (firstPoint) { ctx.moveTo(canvasX, canvasY); firstPoint = false; }
+                else { ctx.lineTo(canvasX, canvasY); }
+                gridPoints.push({ x: canvasX, y: canvasY, record: record });
+            }
+        });
+        ctx.stroke();
+        gridPoints.forEach(p => {
+            ctx.fillStyle = '#FF0000';
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 5, 0, 2 * Math.PI);
+            ctx.fill();
+        });
+    }
+    
+    function handleGridHover(event) {
+        const tooltip = document.getElementById('grid-tooltip');
+        const rect = canvas.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        let foundPoint = null;
+        for (const point of gridPoints) {
+            const distance = Math.sqrt((x - point.x)**2 + (y - point.y)**2);
+            if (distance < 8) { foundPoint = point; break; }
+        }
+        if (foundPoint) {
+            const movement = classifyMovement(foundPoint.record.accel);
+            tooltip.innerHTML = `時間: ${new Date(foundPoint.record.ts).toLocaleTimeString()}<br>状態: ${movement.status}`;
+            tooltip.style.left = `${event.clientX - rect.left + 15}px`;
+            tooltip.style.top = `${event.clientY - rect.top + 15}px`;
+            tooltip.style.display = 'block';
+        } else {
+            tooltip.style.display = 'none';
+        }
+    }
+
+    /* ---------- コアアプリケーションロジック ---------- */
+    function showStatus(message, type = 'info') {
+        const statusEl = document.getElementById('status');
+        statusEl.textContent = message;
+        statusEl.className = `status ${type}`;
+        statusEl.style.display = 'block';
+        setTimeout(() => { statusEl.style.display = 'none'; }, 5000);
+    }
+    
+    function getOrCreateUserId() {
+        let storedUserId = localStorage.getItem('deviceTrackerUserId');
+        if (!storedUserId) {
+            storedUserId = crypto.randomUUID();
+            localStorage.setItem('deviceTrackerUserId', storedUserId);
+        }
+        return storedUserId;
+    }
+
+    function initializeSystem() {
+        showStatus('システムを初期化しています...', 'info');
+        document.getElementById('permissionRequestUI').style.display = 'none';
+        document.getElementById('mainControls').style.display = 'block';
+        userId = getOrCreateUserId();
+        document.getElementById('userIdDisplay').textContent = `ユーザーID: ${userId}`;
+        startSensing();
+    }
+
+    window.requestPermissionsAndStart = async function() {
+        let motionGranted = true;
+        try {
+            if (typeof DeviceMotionEvent.requestPermission === 'function') {
+                const permission = await DeviceMotionEvent.requestPermission();
+                motionGranted = (permission === 'granted');
+            }
+        } catch (error) {
+            motionGranted = false;
+            showStatus('モーションセンサーの権限リクエストが失敗しました。', 'error');
+        }
+        if (motionGranted && navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    showStatus('権限が承認されました！', 'success');
+                    localStorage.setItem('sensorPermissionGranted', 'true');
+                    initializeSystem();
+                    handleLocation(position); 
+                },
+                (error) => {
+                    showStatus('位置情報の権限が拒否されました。機能が制限されます。', 'error');
+                    if (motionGranted) {
+                        localStorage.setItem('sensorPermissionGranted', 'true');
+                        initializeSystem();
+                    }
+                }
+            );
+        } else {
+            showStatus('センサーの権限が拒否されたか、利用不可能です。', 'error');
+        }
+    }
+
+    function startSensing() {
+        if (sensingActive) return;
+        sensingActive = true;
+        showStatus('計測を開始しました', 'success');
+        window.addEventListener('devicemotion', handleMotion);
+        if (navigator.geolocation) {
+            geoWatchId = navigator.geolocation.watchPosition(handleLocation, handleLocationError, { enableHighAccuracy: true });
+        }
+    }
+
+    window.stopSensing = function() {
+        if (!sensingActive) { showStatus('計測を停止しました', 'info'); return; }
+        sensingActive = false;
+        window.removeEventListener('devicemotion', handleMotion);
+        if (geoWatchId !== null) navigator.geolocation.clearWatch(geoWatchId);
+        geoWatchId = null;
+        showStatus('計測を停止しました', 'success');
+    }
+
+    function handleMotion(e) {
+        if (!sensingActive) return;
+        sensorData.accelerometer = { x: e.accelerationIncludingGravity.x?.toFixed(2) || 0, y: e.accelerationIncludingGravity.y?.toFixed(2) || 0, z: e.accelerationIncludingGravity.z?.toFixed(2) || 0 };
+        document.getElementById('accelerometer').innerHTML = `加速度: X:${sensorData.accelerometer.x} Y:${sensorData.accelerometer.y} Z:${sensorData.accelerometer.z}`;
+        pushRecord();
+    }
+
+    function handleLocation(pos) {
+        if (!sensingActive) return;
+        sensorData.location = { lat: pos.coords.latitude.toFixed(6), lng: pos.coords.longitude.toFixed(6), accuracy: Math.round(pos.coords.accuracy) };
+        document.getElementById('location').innerHTML = `位置: ${sensorData.location.lat}, ${sensorData.location.lng} (精度: ${sensorData.location.accuracy}m)`;
+        pushRecord();
+    }
+    function handleLocationError(err) { showStatus(`位置情報エラー: ${err.message}`, 'error'); }
+
+    function pushRecord() {
+        if (!sensingActive) return;
+        const rec = { ts: new Date().toISOString(), accel: { ...sensorData.accelerometer }, loc: { ...sensorData.location } };
+        sensorHistory.push(rec);
+        if (sensorHistory.length > HISTORY_LIMIT) sensorHistory.shift();
+        localStorage.setItem('sensorHistory', JSON.stringify(sensorHistory));
+        updateRecordCount();
+        analyzePattern();
+        updateGridPath();
+        
+        // --- バックエンドへデータを送信 ---
+        fetch(`${BACKEND_URL}/api/data`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...rec, userId: userId })
+        }).catch(error => console.error('バックエンドへのデータ送信に失敗しました:', error));
+    }
+
+    function updateRecordCount() { document.getElementById('recordCount').textContent = `ローカル記録数: ${sensorHistory.length}`; }
+
+    function classifyMovement(a) {
+        if (!a || a.x === null) return { status: "不明" };
+        const m = Math.sqrt(a.x**2 + a.y**2 + (a.z-9.8)**2);
+        if (m < 0.5) return { status: "静止" };
+        if (m < 2.0) return { status: "歩行" };
+        if (m < 5.0) return { status: "走行" };
+        return { status: "激しい運動" };
+    }
+    
+    function analyzePattern() {
+        if (sensorHistory.length === 0) return;
+        const lastRecord = sensorHistory[sensorHistory.length - 1];
+        const movement = classifyMovement(lastRecord.accel);
+        document.getElementById('movementPattern').innerHTML = `移動パターン: <span class="sensor-value">${movement.status}</span>`;
+    }
+
+    /* ---------- AIとバックエンド通信 ---------- */
+    window.getAIAnalysis = async function() {
+        if (sensorHistory.length < 5) { showStatus('AI分析には最低5件の履歴データが必要です。', 'error'); return; }
+        showStatus('バックエンドにAI分析をリクエスト中...', 'info');
+        document.getElementById('aiContent').innerHTML = '🧠 バックエンドAIが思考中...';
+        document.getElementById('aiAnalysisBtn').disabled = true;
+
+        try {
+            const response = await fetch(`${BACKEND_URL}/api/analyze`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ history: sensorHistory })
+            });
+            if (!response.ok) throw new Error(`バックエンドサーバーエラー: ${response.status}`);
+            const result = await response.json();
+            if (result.error) throw new Error(result.error);
+            document.getElementById('aiContent').innerHTML = result.analysis.replace(/\n/g, '<br>');
+            showStatus('AI分析が完了しました', 'success');
+        } catch (error) {
+            document.getElementById('aiContent').innerHTML = `分析中にエラーが発生しました: ${error.message}`;
+            showStatus('AI分析エラー', 'error');
+        } finally {
+            document.getElementById('aiAnalysisBtn').disabled = false;
+        }
+    }
+    
+    window.getSearchSuggestions = async function() {
+        const currentAnalysis = document.getElementById('aiContent').innerText;
+        if (currentAnalysis.includes('...')) { showStatus('まずAI分析を実行してください。', 'error'); return; }
+        showStatus('バックエンドに探索提案をリクエスト中...', 'info');
+        document.getElementById('aiContent').innerHTML += '<hr>🗺️ バックエンドAIがルートを計画中...';
+        document.getElementById('aiSuggestBtn').disabled = true;
+        
+        try {
+            // バックエンドに /api/suggest インターフェースがあると仮定
+            const response = await fetch(`${BACKEND_URL}/api/suggest`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ analysis: currentAnalysis })
+            });
+            if (!response.ok) throw new Error(`バックエンドサーバーエラー: ${response.status}`);
+            const result = await response.json();
+            if (result.error) throw new Error(result.error);
+            document.getElementById('aiContent').innerHTML = result.suggestion.replace(/\n/g, '<br>');
+            showStatus('探索提案が生成されました', 'success');
+        } catch (error) {
+            document.getElementById('aiContent').innerHTML = `提案の生成中にエラーが発生しました: ${error.message}`;
+            showStatus('探索提案エラー', 'error');
+        } finally {
+            document.getElementById('aiSuggestBtn').disabled = false;
+        }
+    }
+
+    /* ---------- ユーティリティ関数 (エクスポートなど) ---------- */
+    window.exportCSV = function() {
+        if (sensorHistory.length === 0) { showStatus('データがありません', 'error'); return; }
+        const header = ['timestamp', 'ax', 'ay', 'az', 'lat', 'lng', 'accuracy'];
+        const rows = sensorHistory.map(r => [r.ts, r.accel.x, r.accel.y, r.accel.z, r.loc.lat, r.loc.lng, r.loc.accuracy].join(','));
+        downloadFile([header.join(','), ...rows].join('\n'), 'sensor_data.csv', 'text/csv');
+    }
+
+    window.exportJSON = function() {
+        if (sensorHistory.length === 0) { showStatus('データがありません', 'error'); return; }
+        downloadFile(JSON.stringify(sensorHistory, null, 2), 'sensor_data.json', 'application/json');
+    }
+
+    function downloadFile(data, filename, type) {
+        const blob = new Blob([data], { type });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = filename; document.body.appendChild(a); a.click();
+        document.body.removeChild(a); URL.revokeObjectURL(url);
+    }
+
+    /* ---------- 初期化 ---------- */
+    window.addEventListener('load', () => {
+        showStatus('スマートトラッカーシステムの準備ができました', 'success');
+        const saved = localStorage.getItem('sensorHistory');
+        if (saved) sensorHistory = JSON.parse(saved);
+        
+        initGrid();
+
+        if (localStorage.getItem('sensorPermissionGranted') === 'true') {
+            initializeSystem();
+        } else {
+            document.getElementById('permissionRequestUI').style.display = 'block';
+        }
+    });
+  </script>
+</body>
+</html>
