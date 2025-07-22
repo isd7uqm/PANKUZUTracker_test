@@ -1,15 +1,10 @@
-# ===============================================================
-# 文件名: app.py
-# ===============================================================
 import os
 import openai
 import json
-# 1. 确保导入了 send_from_directory
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 
 # --- 初始化 ---
-# 2. 确保在初始化时指定了 static_folder
 app = Flask(__name__, static_folder='static')
 CORS(app) 
 
@@ -103,7 +98,6 @@ def get_suggestion():
         print(f"OpenAI API呼び出しエラー: {e}")
         return jsonify({"error": f"OpenAI APIの呼び出し中にエラーが発生しました: {str(e)}"}), 500
 
-# 3. 确保添加了这个根路由
 @app.route('/')
 def serve_index():
     """当用户访问根URL时，返回 index.html 文件。"""
@@ -111,10 +105,4 @@ def serve_index():
 
 # --- 启动服务器 ---
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5001, debug=True)
-```text
-# 文件名: requirements.txt
-flask
-openai
-flask-cors
-gunicorn
+    app.run(host='0.0.0.0', port=10000, debug=False)
