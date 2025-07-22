@@ -1,5 +1,5 @@
 # ===============================================================
-# 文件名: app.py (调试增强版)
+# 文件名: app.py (模型测试版)
 # ===============================================================
 import os
 import openai
@@ -43,7 +43,6 @@ def receive_data():
     data = request.json
     user_id = data.get('userId', 'unknown_user')
     movement_status = classify_movement(data.get('accel'))
-    # 使用 f-string 格式化日志，更安全
     print(f"[INFO] ユーザーID [{user_id}] からデータ受信。状態: {movement_status['status']}")
     return jsonify({"status": "success", "received_movement": movement_status['status']})
 
@@ -70,9 +69,10 @@ def analyze_data():
         これらの情報に基づき、最も可能性の高い場所トップ3を、確率と共に報告してください。
         """
 
-        print("[DEBUG] Calling OpenAI API for analysis...")
+        print("[DEBUG] Calling OpenAI API for analysis with model gpt-3.5-turbo...")
         chat_completion = client.chat.completions.create(
-            model="gpt-4o",
+            # --- 调试修改：使用 gpt-3.5-turbo 进行测试 ---
+            model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
@@ -83,9 +83,7 @@ def analyze_data():
         return jsonify({"analysis": analysis_text})
         
     except Exception as e:
-        # **重要**: 打印出具体的错误信息
         print(f"[ERROR] An error occurred in /api/analyze: {e}")
-        # 将错误返回给前端，方便调试
         return jsonify({"error": f"サーバー内部でエラーが発生しました: {str(e)}"}), 500
 
 @app.route('/api/suggest', methods=['POST'])
@@ -110,9 +108,10 @@ def get_suggestion():
         ユーザーがすぐに行動に移せるような、明確で簡潔な指示リストを作成してください。
         """
         
-        print("[DEBUG] Calling OpenAI API for suggestion...")
+        print("[DEBUG] Calling OpenAI API for suggestion with model gpt-3.5-turbo...")
         chat_completion = client.chat.completions.create(
-            model="gpt-4o",
+            # --- 调试修改：使用 gpt-3.5-turbo 进行测试 ---
+            model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
@@ -122,7 +121,6 @@ def get_suggestion():
         print("[DEBUG] Successfully received suggestion from OpenAI.")
         return jsonify({"suggestion": suggestion_text})
     except Exception as e:
-        # **重要**: 打印出具体的错误信息
         print(f"[ERROR] An error occurred in /api/suggest: {e}")
         return jsonify({"error": f"サーバー内部でエラーが発生しました: {str(e)}"}), 500
 
@@ -133,5 +131,4 @@ def serve_index():
 
 # --- 启动服务器 ---
 if __name__ == '__main__':
-    # 注意: Render 会忽略这里的 port 设置，并使用它自己的端口
     app.run(host='0.0.0.0', port=10000, debug=False)
