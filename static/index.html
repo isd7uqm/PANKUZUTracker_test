@@ -3,9 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>スマートデバイス・トラッカー (フロントエンド/バックエンド分離版)</title>
+  <title>スマートデバイス・トラッカー</title>
 
   <!-- ----------------------------  CSS  ---------------------------- -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
   <style>
       :root {
           --primary-color-start: #667eea;
@@ -37,32 +38,15 @@
       .content{padding:20px;}
       
       #grid-container {
-          position: relative;
+          display: none;
+      }
+      #map {
           width: 100%;
           height: 45vh;
-          background-color: #fdfdfd;
           border-radius: 12px;
           margin-bottom: 20px;
           border: 3px solid var(--border-light);
           box-shadow: 0 4px 10px rgba(0,0,0,0.05);
-      }
-      #pathGrid {
-          width: 100%;
-          height: 100%;
-          cursor: crosshair;
-      }
-      #grid-tooltip {
-          display: none;
-          position: absolute;
-          background: rgba(0, 0, 0, 0.75);
-          color: white;
-          padding: 8px 12px;
-          border-radius: 6px;
-          font-size: 0.85rem;
-          pointer-events: none;
-          white-space: nowrap;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-          z-index: 10;
       }
       
       .ai-section {
@@ -124,16 +108,16 @@
   <div class="container">
       <div class="header">
           <h1>📉 スマートパス・トラッカー</h1>
-          <p>AI駆動のデバイス発見システム (フロントエンド/バックエンド分離版)</p>
+          <p>AI駆動のデバイス発見システム</p>
       </div>
 
       <div class="content">
-          <div id="grid-container">
-              <canvas id="pathGrid"></canvas>
-              <div id="grid-tooltip"></div>
-          </div>
+          <div id="map"></div>
 
           <div class="controls-panel">
+              <div id="bluetoothConnectUI">
+                  <button class="btn" onclick="connectBluetoothDevice()">Bluetoothデバイス接続</button>
+              </div>
               <div id="permissionRequestUI" style="display: none;">
                   <p style="margin-bottom: 10px;">あなたの経路を追跡するために、デバイスのセンサーへのアクセス許可が必要です。</p>
                   <button class="btn secondary" style="font-size: 1.1rem; padding: 12px 28px;" onclick="requestPermissionsAndStart()">許可して開始</button>
@@ -143,6 +127,8 @@
                   <button class="btn" onclick="exportCSV()">CSVエクスポート</button>
                   <button class="btn secondary" onclick="exportJSON()">JSONエクスポート</button>
               </div>
+              <div id="deviceNameDisplay" style="margin: 10px 0; font-weight: bold;"></div>
+              <button class="btn danger" onclick="resetHistory()">履歴リセット</button>
           </div>
 
           <div class="ai-section">
@@ -175,6 +161,7 @@
       </div>
   </div>
 
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <script>
     // --- グローバル変数 ---
     let sensorData = { accelerometer:{x:0,y:0,z:0}, location:{lat:0,lng:0,accuracy:0} };
@@ -183,99 +170,46 @@
     let sensingActive = false;
     let geoWatchId = null;
     let userId = null;
+    let connectedDeviceName = null;
     
     // バックエンドサーバーのアドレス
     const BACKEND_URL = '';
 
-    // --- グリッドキャンバス変数 ---
-    let canvas, ctx, gridOrigin = null, gridPoints = [];
-    const METERS_PER_PIXEL = 1;
+    // --- 地図変数 ---
+    let map, markerGroup;
 
-    /* ---------- Grid Canvas Logic (変更なし) ---------- */
-    function initGrid() {
-        canvas = document.getElementById('pathGrid');
-        ctx = canvas.getContext('2d');
-        const container = document.getElementById('grid-container');
-        canvas.width = container.clientWidth;
-        canvas.height = container.clientHeight;
-        canvas.addEventListener('mousemove', handleGridHover);
-        drawGrid();
-        updateGridPath();
+    function initMap() {
+        map = L.map('map').setView([35.681236, 139.767125], 16); // デフォルト: 東京駅
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+        markerGroup = L.layerGroup().addTo(map);
+        updateMapMarkers();
     }
 
-    function drawGrid() {
-        if (!ctx) return;
-        const width = canvas.width;
-        const height = canvas.height;
-        ctx.clearRect(0, 0, width, height);
-        ctx.strokeStyle = '#e0e0e0';
-        ctx.lineWidth = 0.5;
-        for (let x = 0; x < width; x += 20) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke(); }
-        for (let y = 0; y < height; y += 20) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke(); }
-        ctx.strokeStyle = '#cccccc';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(width / 2, 0); ctx.lineTo(width / 2, height);
-        ctx.moveTo(0, height / 2); ctx.lineTo(width, height);
-        ctx.stroke();
-    }
-
-    function updateGridPath() {
-        if (!ctx) return;
-        drawGrid();
-        gridPoints = [];
+    function updateMapMarkers() {
+        if (!markerGroup) return;
+        markerGroup.clearLayers();
         if (sensorHistory.length === 0) return;
-        if (!gridOrigin) {
-            const firstValidLoc = sensorHistory.find(r => r.loc && r.loc.lat !== 0);
-            if (firstValidLoc) gridOrigin = { lat: parseFloat(firstValidLoc.loc.lat), lng: parseFloat(firstValidLoc.loc.lng) };
-            else return;
-        }
-        const centerX = canvas.width / 2;
-        const centerY = canvas.height / 2;
-        ctx.strokeStyle = '#FF0000';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        let firstPoint = true;
+        // カスタムアイコン（pan.png）
+        const customIcon = L.icon({
+            iconUrl: '/src/pan.png',
+            iconSize: [32, 32],
+            iconAnchor: [16, 32],
+            popupAnchor: [0, -32]
+        });
         sensorHistory.forEach(record => {
-            if (record.loc && record.loc.lat !== 0) {
+            if (record.loc && record.loc.lat && record.loc.lng) {
                 const lat = parseFloat(record.loc.lat);
                 const lng = parseFloat(record.loc.lng);
-                const metersY = (lat - gridOrigin.lat) * 111132.954;
-                const metersX = (lng - gridOrigin.lng) * 111320 * Math.cos(gridOrigin.lat * Math.PI / 180);
-                const canvasX = centerX + metersX / METERS_PER_PIXEL;
-                const canvasY = centerY - metersY / METERS_PER_PIXEL;
-                if (firstPoint) { ctx.moveTo(canvasX, canvasY); firstPoint = false; }
-                else { ctx.lineTo(canvasX, canvasY); }
-                gridPoints.push({ x: canvasX, y: canvasY, record: record });
+                L.marker([lat, lng], {icon: customIcon}).addTo(markerGroup)
+                    .bindPopup(`時間: ${new Date(record.ts).toLocaleTimeString()}<br>状態: ${classifyMovement(record.accel).status}`);
             }
         });
-        ctx.stroke();
-        gridPoints.forEach(p => {
-            ctx.fillStyle = '#FF0000';
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, 5, 0, 2 * Math.PI);
-            ctx.fill();
-        });
-    }
-    
-    function handleGridHover(event) {
-        const tooltip = document.getElementById('grid-tooltip');
-        const rect = canvas.getBoundingClientRect();
-        const x = event.clientX - rect.left;
-        const y = event.clientY - rect.top;
-        let foundPoint = null;
-        for (const point of gridPoints) {
-            const distance = Math.sqrt((x - point.x)**2 + (y - point.y)**2);
-            if (distance < 8) { foundPoint = point; break; }
-        }
-        if (foundPoint) {
-            const movement = classifyMovement(foundPoint.record.accel);
-            tooltip.innerHTML = `時間: ${new Date(foundPoint.record.ts).toLocaleTimeString()}<br>状態: ${movement.status}`;
-            tooltip.style.left = `${event.clientX - rect.left + 15}px`;
-            tooltip.style.top = `${event.clientY - rect.top + 15}px`;
-            tooltip.style.display = 'block';
-        } else {
-            tooltip.style.display = 'none';
+        // 最後の点にズーム
+        const last = sensorHistory[sensorHistory.length-1];
+        if (last && last.loc && last.loc.lat && last.loc.lng) {
+            map.setView([parseFloat(last.loc.lat), parseFloat(last.loc.lng)], 18);
         }
     }
 
@@ -355,6 +289,8 @@
         if (geoWatchId !== null) navigator.geolocation.clearWatch(geoWatchId);
         geoWatchId = null;
         showStatus('計測を停止しました', 'success');
+        connectedDeviceName = null;
+        updateDeviceNameDisplay();
     }
 
     function handleMotion(e) {
@@ -380,7 +316,7 @@
         localStorage.setItem('sensorHistory', JSON.stringify(sensorHistory));
         updateRecordCount();
         analyzePattern();
-        updateGridPath();
+        updateMapMarkers();
         
         // --- バックエンドへデータを送信 ---
         fetch(`${BACKEND_URL}/api/data`, {
@@ -482,19 +418,53 @@
         document.body.removeChild(a); URL.revokeObjectURL(url);
     }
 
+    window.connectBluetoothDevice = async function() {
+        try {
+            // acceptAllDevices: true で全Bluetoothデバイスを許可（必要に応じてフィルタを追加）
+            const device = await navigator.bluetooth.requestDevice({
+                acceptAllDevices: true
+            });
+            connectedDeviceName = device.name || '名称なし';
+            showStatus('Bluetoothデバイスに接続しました: ' + connectedDeviceName, 'success');
+            updateDeviceNameDisplay();
+            // 必要なら device.gatt.connect() などで接続を確立
+            // 接続成功時にセンサー許可UIを表示
+            document.getElementById('bluetoothConnectUI').style.display = 'none';
+            document.getElementById('permissionRequestUI').style.display = 'block';
+        } catch (error) {
+            showStatus('Bluetooth接続に失敗しました: ' + error, 'error');
+        }
+    }
+
+    function updateDeviceNameDisplay() {
+        const el = document.getElementById('deviceNameDisplay');
+        if (connectedDeviceName) {
+            el.textContent = `計測中: ${connectedDeviceName}`;
+        } else {
+            el.textContent = '';
+        }
+    }
+
+    function resetHistory() {
+        localStorage.removeItem('sensorHistory');
+        localStorage.removeItem('deviceTrackerUserId');
+        localStorage.removeItem('sensorPermissionGranted');
+        connectedDeviceName = null;
+        updateDeviceNameDisplay();
+        location.reload();
+    }
+
     /* ---------- 初期化 ---------- */
     window.addEventListener('load', () => {
         showStatus('スマートトラッカーシステムの準備ができました', 'success');
         const saved = localStorage.getItem('sensorHistory');
         if (saved) sensorHistory = JSON.parse(saved);
         
-        initGrid();
-
-        if (localStorage.getItem('sensorPermissionGranted') === 'true') {
-            initializeSystem();
-        } else {
-            document.getElementById('permissionRequestUI').style.display = 'block';
-        }
+        initMap();
+        // Bluetooth接続UIのみ表示
+        document.getElementById('bluetoothConnectUI').style.display = 'block';
+        document.getElementById('permissionRequestUI').style.display = 'none';
+        document.getElementById('mainControls').style.display = 'none';
     });
   </script>
 </body>
