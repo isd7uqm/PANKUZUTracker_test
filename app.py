@@ -3,22 +3,17 @@ import openai
 import json
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
-# 1. 重新导入 python-dotenv 库
 from dotenv import load_dotenv
 
 # --- 初始化 ---
-# 2. 在程序开始时加载 .env 文件 (这主要用于本地开发)
-# 在 Render 上，环境变量会由平台直接提供
 load_dotenv()
 
 app = Flask(__name__, static_folder='static')
 CORS(app) 
 
 # --- 配置 OpenAI API 客户端 ---
-# 3. 从环境变量中安全地读取 API 密钥
 api_key = os.getenv("OPENAI_API_KEY")
 
-# 增加一个检查，如果密钥不存在则打印错误并退出
 if not api_key:
     raise ValueError("OpenAI APIキーが設定されていません。環境変数 'OPENAI_API_KEY' を設定してください。")
 
@@ -52,7 +47,12 @@ def receive_data():
     data = request.json
     user_id = data.get('userId', 'unknown_user')
     movement_status = classify_movement(data.get('accel'))
-    print(f"[INFO] ユーザーID [{user_id}] からデータ受信。状態: {movement_status['status']}")
+    # ★★★ 変更点: bluetoothConnected を取得 ★★★
+    is_connected = data.get('bluetoothConnected', False)
+    
+    # ★★★ 変更点: ログにBT接続状態を追加 ★★★
+    print(f"[INFO] ユーザーID [{user_id}] からデータ受信。状態: {movement_status['status']}。BT接続: {is_connected}")
+    
     return jsonify({"status": "success", "received_movement": movement_status['status']})
 
 @app.route('/api/analyze', methods=['POST'])
@@ -66,21 +66,46 @@ def analyze_data():
         if len(sensor_history) < 5:
             return jsonify({"error": "分析するにはデータが不足しています（最低5件必要です）"}), 400
 
+        # ★★★ 変更点: プロンプトを更新し、bluetoothConnected の説明を追加 ★★★
         system_prompt = "あなたは優秀な探偵です。ユーザーから提供されたセンサーデータ履歴を分析し、紛失したデバイスが最も可能性の高い場所を3つ、その理由と共に提案してください。"
         history_str = json.dumps(sensor_history, indent=2, ensure_ascii=False)
         user_prompt = f"""
         以下がセンサーデータの履歴です (直近{len(sensor_history)}件):
         {history_str}
+
         分析のポイント:
         - 位置情報(loc): データがどの場所で途切れたか、または頻繁に記録されているか？
         - 加速度(accel): 最後の移動状態は何か？
         - タイムスタンプ(ts): 最後の記録はいつか？
+        - Bluetooth接続状態(bluetoothConnected): `true`は接続中、`false`は未接続を示します。接続が途切れた瞬間は、デバイスが手元から離れた可能性が高い重要な手がかりです。
+
         これらの情報に基づき、最も可能性の高い場所トップ3を、確率と共に報告してください。
+        回答形式:
+        提供されたセンサーデータの履歴を分析した結果、最も可能性の高い場所トップ3およびその理由を以下に示します。
+        
+        1. 場所1: 緯度[緯度値]、経度[経度値]
+        - 確率: [確率]%
+        - 理由:
+        [具体的な理由を記載。Bluetooth接続がここで途切れた、などの情報を活用してください。]
+        
+        2. 場所2: 緯度[緯度値]、経度[経度値]
+        - 確率: [確率]%
+        - 理由:
+        [具体的な理由を記載]
+        
+        3. 場所3: 緯度[緯度値]、経度[経度値]
+        - 確率: [確率]%
+        - 理由:
+        [具体的な理由を記載]
+        
+        これらの情報に基づいて、デバイスが最も可能性の高い場所を上記の3つとして推定します。
+        
+        注意: 緯度経度は必ず「緯度○○、経度○○」の形式で記載してください。
         """
 
         print("[DEBUG] Calling OpenAI API for analysis...")
         chat_completion = client.chat.completions.create(
-            model="gpt-3.5-turbo", # 使用 gpt-3.5-turbo 进行测试
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
@@ -118,7 +143,7 @@ def get_suggestion():
         
         print("[DEBUG] Calling OpenAI API for suggestion...")
         chat_completion = client.chat.completions.create(
-            model="gpt-3.5-turbo", # 使用 gpt-3.5-turbo 进行测试
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
@@ -134,6 +159,10 @@ def get_suggestion():
 @app.route('/')
 def serve_index():
     return send_from_directory(app.static_folder, 'index.html')
+
+@app.route('/src/<path:filename>')
+def serve_src(filename):
+    return send_from_directory('src', filename)
 
 # --- 启动服务器 ---
 if __name__ == '__main__':

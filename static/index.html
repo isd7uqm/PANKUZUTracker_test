@@ -164,6 +164,7 @@
   <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
   <script>
     // --- グローバル変数 ---
+    // ★★★ 修正点: ここで sensorData を一度だけ宣言するようにしました ★★★
     let sensorData = { accelerometer:{x:0,y:0,z:0}, location:{lat:0,lng:0,accuracy:0} };
     let sensorHistory = [];
     const HISTORY_LIMIT = 100;
@@ -310,7 +311,12 @@
 
     function pushRecord() {
         if (!sensingActive) return;
-        const rec = { ts: new Date().toISOString(), accel: { ...sensorData.accelerometer }, loc: { ...sensorData.location } };
+        const rec = { 
+            ts: new Date().toISOString(), 
+            accel: { ...sensorData.accelerometer }, 
+            loc: { ...sensorData.location },
+            bluetoothConnected: !!connectedDeviceName 
+        };
         sensorHistory.push(rec);
         if (sensorHistory.length > HISTORY_LIMIT) sensorHistory.shift();
         localStorage.setItem('sensorHistory', JSON.stringify(sensorHistory));
@@ -318,7 +324,6 @@
         analyzePattern();
         updateMapMarkers();
         
-        // --- バックエンドへデータを送信 ---
         fetch(`${BACKEND_URL}/api/data`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -362,6 +367,7 @@
             if (result.error) throw new Error(result.error);
             document.getElementById('aiContent').innerHTML = result.analysis.replace(/\n/g, '<br>');
             showStatus('AI分析が完了しました', 'success');
+            embedMapsInAnalysis();
         } catch (error) {
             document.getElementById('aiContent').innerHTML = `分析中にエラーが発生しました: ${error.message}`;
             showStatus('AI分析エラー', 'error');
@@ -378,7 +384,6 @@
         document.getElementById('aiSuggestBtn').disabled = true;
         
         try {
-            // バックエンドに /api/suggest インターフェースがあると仮定
             const response = await fetch(`${BACKEND_URL}/api/suggest`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -389,6 +394,7 @@
             if (result.error) throw new Error(result.error);
             document.getElementById('aiContent').innerHTML = result.suggestion.replace(/\n/g, '<br>');
             showStatus('探索提案が生成されました', 'success');
+            embedMapsInAnalysis();
         } catch (error) {
             document.getElementById('aiContent').innerHTML = `提案の生成中にエラーが発生しました: ${error.message}`;
             showStatus('探索提案エラー', 'error');
@@ -400,8 +406,8 @@
     /* ---------- ユーティリティ関数 (エクスポートなど) ---------- */
     window.exportCSV = function() {
         if (sensorHistory.length === 0) { showStatus('データがありません', 'error'); return; }
-        const header = ['timestamp', 'ax', 'ay', 'az', 'lat', 'lng', 'accuracy'];
-        const rows = sensorHistory.map(r => [r.ts, r.accel.x, r.accel.y, r.accel.z, r.loc.lat, r.loc.lng, r.loc.accuracy].join(','));
+        const header = ['timestamp', 'ax', 'ay', 'az', 'lat', 'lng', 'accuracy', 'bluetoothConnected'];
+        const rows = sensorHistory.map(r => [r.ts, r.accel.x, r.accel.y, r.accel.z, r.loc.lat, r.loc.lng, r.loc.accuracy, r.bluetoothConnected].join(','));
         downloadFile([header.join(','), ...rows].join('\n'), 'sensor_data.csv', 'text/csv');
     }
 
@@ -420,15 +426,18 @@
 
     window.connectBluetoothDevice = async function() {
         try {
-            // acceptAllDevices: true で全Bluetoothデバイスを許可（必要に応じてフィルタを追加）
             const device = await navigator.bluetooth.requestDevice({
                 acceptAllDevices: true
             });
             connectedDeviceName = device.name || '名称なし';
             showStatus('Bluetoothデバイスに接続しました: ' + connectedDeviceName, 'success');
             updateDeviceNameDisplay();
-            // 必要なら device.gatt.connect() などで接続を確立
-            // 接続成功時にセンサー許可UIを表示
+            
+            device.addEventListener('gattserverdisconnected', () => {
+                showStatus('Bluetoothデバイスが切断されました。計測を停止します。', 'error');
+                stopSensing();
+            });
+            
             document.getElementById('bluetoothConnectUI').style.display = 'none';
             document.getElementById('permissionRequestUI').style.display = 'block';
         } catch (error) {
@@ -454,6 +463,61 @@
         location.reload();
     }
 
+    // --- AI解析結果に地図を埋め込む ---
+    function embedMapsInAnalysis() {
+        const aiContent = document.getElementById('aiContent');
+        const content = aiContent.innerHTML;
+        
+        const regex = /緯度([+-]?\d+\.\d+)、経度([+-]?\d+\.\d+)/g;
+        let result;
+        let modifiedContent = content;
+        let latLngData = [];
+        
+        while ((result = regex.exec(content)) !== null) {
+            latLngData.push({
+                lat: parseFloat(result[1]),
+                lng: parseFloat(result[2]),
+                index: result.index,
+                fullMatch: result[0]
+            });
+        }
+        
+        for (let i = latLngData.length - 1; i >= 0; i--) {
+            const data = latLngData[i];
+            const mapId = `map-${i}`;
+            const mapContainer = `<div id="${mapId}" style="width: 100%; height: 200px; margin: 10px 0; border-radius: 8px; border: 2px solid #e3e8ff;"></div>`;
+            
+            const insertPosition = data.index + data.fullMatch.length;
+            modifiedContent = modifiedContent.slice(0, insertPosition) + 
+                              '<br>' + mapContainer + 
+                              modifiedContent.slice(insertPosition);
+        }
+        
+        aiContent.innerHTML = modifiedContent;
+        
+        setTimeout(() => {
+            latLngData.forEach((data, i) => {
+                const mapId = `map-${i}`;
+                const mapElement = document.getElementById(mapId);
+                if (mapElement) {
+                    const miniMap = L.map(mapId).setView([data.lat, data.lng], 18);
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        attribution: '© OpenStreetMap contributors'
+                    }).addTo(miniMap);
+                    
+                    L.marker([data.lat, data.lng], {
+                        icon: L.icon({
+                            iconUrl: '/src/pin.png',
+                            iconSize: [32, 32],
+                            iconAnchor: [16, 32],
+                            popupAnchor: [0, -32]
+                        })
+                    }).addTo(miniMap).bindPopup(`推定位置 ${i + 1}: ${data.lat}, ${data.lng}`);
+                }
+            });
+        }, 100);
+    }
+
     /* ---------- 初期化 ---------- */
     window.addEventListener('load', () => {
         showStatus('スマートトラッカーシステムの準備ができました', 'success');
@@ -461,7 +525,6 @@
         if (saved) sensorHistory = JSON.parse(saved);
         
         initMap();
-        // Bluetooth接続UIのみ表示
         document.getElementById('bluetoothConnectUI').style.display = 'block';
         document.getElementById('permissionRequestUI').style.display = 'none';
         document.getElementById('mainControls').style.display = 'none';
