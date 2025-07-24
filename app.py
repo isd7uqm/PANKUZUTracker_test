@@ -27,17 +27,35 @@ client = openai.OpenAI(api_key=api_key)
 
 # --- 算法与辅助函数 ---
 def classify_movement(accel_data):
+    """
+    accel_data = {"x": <float>, "y": <float>, "z": <float>}
+    静止・歩行・走行・激しい運動 を判定して status を返す
+    """
     if not accel_data or accel_data.get('x') is None:
         return {"status": "不明"}
     try:
-        a = {k: float(v) for k, v in accel_data.items()}
-        m = (a['x']**2 + a['y']**2 + (a['z'] - 9.8)**2)**0.5
-        if m < 0.5: return {"status": "静止"}
-        if m < 2.0: return {"status": "歩行"}
-        if m < 5.0: return {"status": "走行"}
+        ax = float(accel_data['x'])
+        ay = float(accel_data['y'])
+        az = float(accel_data['z'])
+
+        # 1) 合成加速度の大きさ
+        magnitude = (ax**2 + ay**2 + az**2)**0.5
+
+        # 2) 重力分を差し引き、動的加速度だけを評価
+        dynamic_acc = abs(magnitude - 9.8)
+
+        # 3) しきい値で分類
+        if dynamic_acc < 0.3:
+            return {"status": "静止"}
+        if dynamic_acc < 2.0:
+            return {"status": "歩行"}
+        if dynamic_acc < 4.0:
+            return {"status": "走行"}
         return {"status": "激しい運動"}
+
     except (ValueError, TypeError):
         return {"status": "不明"}
+
 
 # --- API 接口 (Endpoints) ---
 
