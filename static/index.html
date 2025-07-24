@@ -37,9 +37,6 @@
       .header h1{font-size:2.2rem;margin-bottom:10px;}
       .content{padding:20px;}
       
-      #grid-container {
-          display: none;
-      }
       #map {
           width: 100%;
           height: 45vh;
@@ -92,16 +89,11 @@
       }
       .feature-card h3{color:#4c51bf;margin-bottom:15px;font-size:1.3rem;}
       
-      .sensor-value{
-          font-family:'Courier New',monospace;background:#edf2f7;padding:5px 10px;
-          border-radius:4px;display:inline-block;margin:2px;
-      }
       .status{padding:15px;border-radius:8px;margin:15px 0;font-weight:500;}
       .status.info{background:#bee3f8;color:#2c5282;}
       .status.error{background:#fed7d7;color:#742a2a;}
       .status.success{background:#c6f6d5;color:#22543d;}
 
-      #userIdDisplay { font-size: 0.8rem; word-break: break-all; margin-top: 10px; color: #334155;}
   </style>
 </head>
 <body>
@@ -129,6 +121,14 @@
               </div>
               <div id="deviceNameDisplay" style="margin: 10px 0; font-weight: bold;"></div>
               <button class="btn danger" onclick="resetHistory()">履歴リセット</button>
+          </div>
+          
+          <!-- マルチクライアント通信セクション -->
+          <div class="multi-client-section" style="margin: 24px 0; padding: 18px; background: #f8f9ff; border-radius: 12px; border: 2px solid #e3e8ff; box-shadow: 0 2px 8px rgba(0,0,0,0.03);">
+              <h3 style="margin-bottom: 12px; color: #667eea;">マルチクライアント通信</h3>
+              <button class="btn danger" style="margin-right: 12px;" onclick="broadcastLostDevice()">なくしました（周囲に通知）</button>
+              <button class="btn" onclick="assistSearch()">手伝（周囲をスキャン）</button>
+              <button class="btn" onclick="manualHelpReport()">手伝（伝言）</button>
           </div>
 
           <div class="ai-section">
@@ -171,9 +171,10 @@
     let geoWatchId = null;
     let userId = null;
     let connectedDeviceName = null;
+    let deviceId = null;
     
     // バックエンドサーバーのアドレス
-    const BACKEND_URL = '';
+    const BACKEND_URL = 'https://pankuzutracker-test.onrender.com';
 
     // --- 地図変数 ---
     let map, markerGroup;
@@ -185,13 +186,14 @@
         }).addTo(map);
         markerGroup = L.layerGroup().addTo(map);
         updateMapMarkers();
+        fetchAndDisplayBroadcasts(); // 取回所有广播信息并显示在地图
+        setInterval(fetchAndDisplayBroadcasts, 10000); // 定时刷新广播点
     }
 
     function updateMapMarkers() {
         if (!markerGroup) return;
         markerGroup.clearLayers();
         if (sensorHistory.length === 0) return;
-        // カスタムアイコン（pan.png）
         const customIcon = L.icon({
             iconUrl: '/src/pan.png',
             iconSize: [32, 32],
@@ -206,7 +208,6 @@
                     .bindPopup(`時間: ${new Date(record.ts).toLocaleTimeString()}<br>状態: ${classifyMovement(record.accel).status}`);
             }
         });
-        // 最後の点にズーム
         const last = sensorHistory[sensorHistory.length-1];
         if (last && last.loc && last.loc.lat && last.loc.lng) {
             map.setView([parseFloat(last.loc.lat), parseFloat(last.loc.lng)], 18);
@@ -231,12 +232,25 @@
         return storedUserId;
     }
 
+    function getOrCreateDeviceId() {
+        let storedDeviceId = localStorage.getItem('deviceTrackerDeviceId');
+        if (!storedDeviceId) {
+            storedDeviceId = crypto.randomUUID();
+            localStorage.setItem('deviceTrackerDeviceId', storedDeviceId);
+        }
+        return storedDeviceId;
+    }
+
     function initializeSystem() {
         showStatus('システムを初期化しています...', 'info');
         document.getElementById('permissionRequestUI').style.display = 'none';
         document.getElementById('mainControls').style.display = 'block';
         userId = getOrCreateUserId();
+        deviceId = getOrCreateDeviceId();
         document.getElementById('userIdDisplay').textContent = `ユーザーID: ${userId}`;
+        if (document.getElementById('deviceIdDisplay')) {
+            document.getElementById('deviceIdDisplay').textContent = `デバイスID: ${deviceId}`;
+        }
         startSensing();
     }
 
@@ -310,7 +324,13 @@
 
     function pushRecord() {
         if (!sensingActive) return;
-        const rec = { ts: new Date().toISOString(), accel: { ...sensorData.accelerometer }, loc: { ...sensorData.location } };
+        // ★★★ 変更点: bluetoothConnected フィールドを追加 ★★★
+        const rec = { 
+            ts: new Date().toISOString(), 
+            accel: { ...sensorData.accelerometer }, 
+            loc: { ...sensorData.location },
+            bluetoothConnected: !!connectedDeviceName // true or false
+        };
         sensorHistory.push(rec);
         if (sensorHistory.length > HISTORY_LIMIT) sensorHistory.shift();
         localStorage.setItem('sensorHistory', JSON.stringify(sensorHistory));
@@ -362,6 +382,7 @@
             if (result.error) throw new Error(result.error);
             document.getElementById('aiContent').innerHTML = result.analysis.replace(/\n/g, '<br>');
             showStatus('AI分析が完了しました', 'success');
+            embedMapsInAnalysis();
         } catch (error) {
             document.getElementById('aiContent').innerHTML = `分析中にエラーが発生しました: ${error.message}`;
             showStatus('AI分析エラー', 'error');
@@ -378,7 +399,6 @@
         document.getElementById('aiSuggestBtn').disabled = true;
         
         try {
-            // バックエンドに /api/suggest インターフェースがあると仮定
             const response = await fetch(`${BACKEND_URL}/api/suggest`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -389,6 +409,7 @@
             if (result.error) throw new Error(result.error);
             document.getElementById('aiContent').innerHTML = result.suggestion.replace(/\n/g, '<br>');
             showStatus('探索提案が生成されました', 'success');
+            embedMapsInAnalysis();
         } catch (error) {
             document.getElementById('aiContent').innerHTML = `提案の生成中にエラーが発生しました: ${error.message}`;
             showStatus('探索提案エラー', 'error');
@@ -400,8 +421,9 @@
     /* ---------- ユーティリティ関数 (エクスポートなど) ---------- */
     window.exportCSV = function() {
         if (sensorHistory.length === 0) { showStatus('データがありません', 'error'); return; }
-        const header = ['timestamp', 'ax', 'ay', 'az', 'lat', 'lng', 'accuracy'];
-        const rows = sensorHistory.map(r => [r.ts, r.accel.x, r.accel.y, r.accel.z, r.loc.lat, r.loc.lng, r.loc.accuracy].join(','));
+        // ★★★ 変更点: ヘッダーに bluetoothConnected を追加 ★★★
+        const header = ['timestamp', 'ax', 'ay', 'az', 'lat', 'lng', 'accuracy', 'bluetoothConnected'];
+        const rows = sensorHistory.map(r => [r.ts, r.accel.x, r.accel.y, r.accel.z, r.loc.lat, r.loc.lng, r.loc.accuracy, r.bluetoothConnected].join(','));
         downloadFile([header.join(','), ...rows].join('\n'), 'sensor_data.csv', 'text/csv');
     }
 
@@ -420,17 +442,22 @@
 
     window.connectBluetoothDevice = async function() {
         try {
-            // acceptAllDevices: true で全Bluetoothデバイスを許可（必要に応じてフィルタを追加）
             const device = await navigator.bluetooth.requestDevice({
                 acceptAllDevices: true
             });
             connectedDeviceName = device.name || '名称なし';
+            deviceId = device.id || getOrCreateDeviceId();
             showStatus('Bluetoothデバイスに接続しました: ' + connectedDeviceName, 'success');
             updateDeviceNameDisplay();
-            // 必要なら device.gatt.connect() などで接続を確立
-            // 接続成功時にセンサー許可UIを表示
+            device.addEventListener('gattserverdisconnected', () => {
+                showStatus('Bluetoothデバイスが切断されました。計測を停止します。', 'error');
+                stopSensing();
+            });
             document.getElementById('bluetoothConnectUI').style.display = 'none';
             document.getElementById('permissionRequestUI').style.display = 'block';
+            if (document.getElementById('deviceIdDisplay')) {
+                document.getElementById('deviceIdDisplay').textContent = `デバイスID: ${deviceId}`;
+            }
         } catch (error) {
             showStatus('Bluetooth接続に失敗しました: ' + error, 'error');
         }
@@ -454,18 +481,306 @@
         location.reload();
     }
 
+    window.broadcastLostDevice = async function() {
+        // (このセクションは変更なし)
+        const deviceName = connectedDeviceName || "不明デバイス";
+        const userId = getOrCreateUserId();
+        const deviceIdToSend = deviceId || getOrCreateDeviceId();
+        const lastRecord = sensorHistory.length > 0 ? sensorHistory[sensorHistory.length - 1] : null;
+
+        if (!lastRecord || !lastRecord.loc) {
+            showStatus("位置データが見つかりません。計測を行ってください。", "error");
+            return;
+        }
+
+        const message = prompt("紛失デバイスに関するメッセージや連絡先を入力できます（任意）", "");
+
+        const payload = {
+            deviceId: deviceIdToSend,
+            deviceName,
+            userId,
+            lastKnownLocation: lastRecord.loc,
+            timestamp: new Date().toISOString(),
+            message: message || ""
+        };
+
+        try {
+            const response = await fetch(`${BACKEND_URL}/api/broadcast`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            if (!response.ok) throw new Error("サーバーエラー");
+            const result = await response.json();
+            showStatus(result.message || "紛失情報を送信しました", "success");
+            await fetchAndDisplayBroadcasts();
+        } catch (error) {
+            showStatus("紛失情報の送信に失敗しました: " + error.message, "error");
+        }
+    }
+
+    window.manualHelpReport = function() {
+        // (このセクションは変更なし)
+        fetch(`${BACKEND_URL}/api/broadcasts`)
+            .then(res => res.json())
+            .then(broadcasts => {
+                if (!Array.isArray(broadcasts) || broadcasts.length === 0) {
+                    showStatus('現在、協力できる紛失デバイスはありません', 'info');
+                    return;
+                }
+                const target = broadcasts[0];
+                const deviceId = target.deviceId;
+                const message = prompt("協力メッセージや発見状況を入力してください（任意）", "");
+                if (navigator.geolocation) {
+                    navigator.geolocation.getCurrentPosition(async (pos) => {
+                        const location = {
+                            lat: pos.coords.latitude,
+                            lng: pos.coords.longitude,
+                            accuracy: pos.coords.accuracy
+                        };
+                        const payload = {
+                            deviceId,
+                            helperId: getOrCreateUserId(),
+                            location,
+                            timestamp: new Date().toISOString(),
+                            message: message || ""
+                        };
+                        await fetch(`${BACKEND_URL}/api/help_report`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        showStatus('協力位置情報を送信しました', 'success');
+                        await fetchAndDisplayBroadcasts();
+                    }, () => {
+                        showStatus('位置情報の取得に失敗しました', 'error');
+                    });
+                }
+            });
+    }
+
+    async function fetchAndDisplayBroadcasts() {
+        // (このセクションは変更なし)
+        if (!markerGroup) return;
+        markerGroup.clearLayers();
+
+        if (sensorHistory && sensorHistory.length > 0) {
+            const customIcon = L.icon({
+                iconUrl: '/src/pan.png',
+                iconSize: [32, 32],
+                iconAnchor: [16, 32],
+                popupAnchor: [0, -32]
+            });
+            sensorHistory.forEach(record => {
+                if (record.loc && record.loc.lat && record.loc.lng) {
+                    const lat = parseFloat(record.loc.lat);
+                    const lng = parseFloat(record.loc.lng);
+                    L.marker([lat, lng], {icon: customIcon}).addTo(markerGroup)
+                        .bindPopup(`時間: ${new Date(record.ts).toLocaleTimeString()}<br>状態: ${classifyMovement(record.accel).status}`);
+                }
+            });
+        }
+
+        try {
+            const response = await fetch(`${BACKEND_URL}/api/broadcasts`);
+            if (!response.ok) {
+                console.error("放送デバイス取得失敗:", response.status);
+                return;
+            }
+            const broadcasts = await response.json();
+            if (!Array.isArray(broadcasts)) return;
+
+            for (const b of broadcasts) {
+                if (b.lastKnownLocation?.lat && b.lastKnownLocation?.lng) {
+                    const lat = parseFloat(b.lastKnownLocation.lat);
+                    const lng = parseFloat(b.lastKnownLocation.lng);
+                    const icon = L.icon({
+                        iconUrl: `src/lost.png`,
+                        iconSize: [32, 32],
+                        iconAnchor: [16, 32],
+                        popupAnchor: [0, -32]
+                    });
+                    const popupContent = `
+                        📢 <b>紛失デバイス</b><br>
+                        デバイスID: ${b.deviceId || '不明'}<br>
+                        デバイス名: ${b.deviceName}<br>
+                        ユーザーID: ${b.userId}<br>
+                        緯度: ${lat}<br>
+                        経度: ${lng}<br>
+                        時間: ${new Date(b.timestamp).toLocaleString()}<br>
+                        <span style="color:#22543d;">${b.message ? '📝 メッセージ: ' + b.message : ''}</span>
+                    `;
+                    L.marker([lat, lng], { icon }).addTo(map).bindPopup(popupContent);
+
+                    try {
+                        const helpRes = await fetch(`${BACKEND_URL}/api/help_reports?deviceId=${encodeURIComponent(b.deviceId)}`);
+                        const helpPoints = await helpRes.json();
+                        helpPoints.forEach(h => {
+                            if (h.location && h.location.lat && h.location.lng) {
+                                const helpIcon = L.icon({
+                                    iconUrl: 'src/pin2.png',
+                                    iconSize: [24, 24],
+                                    iconAnchor: [12, 24],
+                                    popupAnchor: [0, -24]
+                                });
+                                const hlat = typeof h.location.lat === 'string' ? parseFloat(h.location.lat) : h.location.lat;
+                                const hlng = typeof h.location.lng === 'string' ? parseFloat(h.location.lng) : h.location.lng;
+                                L.marker([
+                                    hlat,
+                                    hlng
+                                ], { icon: helpIcon })
+                                    .addTo(map)
+                                    .bindPopup(`🧭 協力者: ${h.helperId}<br>緯度: ${h.location.lat}<br>経度: ${h.location.lng}<br>時間: ${new Date(h.timestamp).toLocaleString()}<br>${h.message ? '📝 メッセージ: ' + h.message : ''}`);
+                            }
+                        });
+                    } catch (e) {
+                        console.error('協力位置情報の取得に失敗:', e);
+                    }
+                }
+            }
+        } catch (err) {
+            console.error("紛失情報の取得に失敗:", err);
+            showStatus("紛失デバイス情報の取得に失敗しました", "error");
+        }
+    }
+
+    function embedMapsInAnalysis() {
+        // (このセクションは変更なし)
+        const aiContent = document.getElementById('aiContent');
+        const content = aiContent.innerHTML;
+        
+        const regex = /緯度([+-]?\d+\.\d+)、経度([+-]?\d+\.\d+)/g;
+        let result;
+        let modifiedContent = content;
+        let latLngData = [];
+        
+        while ((result = regex.exec(content)) !== null) {
+            latLngData.push({
+                lat: parseFloat(result[1]),
+                lng: parseFloat(result[2]),
+                index: result.index,
+                fullMatch: result[0]
+            });
+        }
+        
+        for (let i = latLngData.length - 1; i >= 0; i--) {
+            const data = latLngData[i];
+            const mapId = `map-${i}`;
+            const mapContainer = `<div id="${mapId}" style="width: 100%; height: 200px; margin: 10px 0; border-radius: 8px; border: 2px solid #e3e8ff;"></div>`;
+            
+            const insertPosition = data.index + data.fullMatch.length;
+            modifiedContent = modifiedContent.slice(0, insertPosition) + 
+                             '<br>' + mapContainer + 
+                             modifiedContent.slice(insertPosition);
+        }
+        
+        aiContent.innerHTML = modifiedContent;
+        
+        setTimeout(() => {
+            latLngData.forEach((data, i) => {
+                const mapId = `map-${i}`;
+                const mapElement = document.getElementById(mapId);
+                if (mapElement) {
+                    const miniMap = L.map(mapId).setView([data.lat, data.lng], 18);
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                        attribution: '© OpenStreetMap contributors'
+                    }).addTo(miniMap);
+                    
+                    L.marker([data.lat, data.lng], {
+                        icon: L.icon({
+                            iconUrl: '/src/pin.png',
+                            iconSize: [32, 32],
+                            iconAnchor: [16, 32],
+                            popupAnchor: [0, -32]
+                        })
+                    }).addTo(miniMap).bindPopup(`推定位置 ${i + 1}: ${data.lat}, ${data.lng}`);
+                }
+            });
+        }, 100);
+    }
+
+    window.assistSearch = async function() {
+        // (このセクションは変更なし)
+        showStatus('周囲のBluetoothデバイスをスキャン中...', 'info');
+        let broadcasts = [];
+        try {
+            const res = await fetch(`${BACKEND_URL}/api/broadcasts`);
+            broadcasts = await res.json();
+        } catch (e) {
+            showStatus('放送デバイス情報の取得に失敗', 'error');
+            return;
+        }
+        if (!Array.isArray(broadcasts) || broadcasts.length === 0) {
+            showStatus('現在、協力できる紛失デバイスはありません', 'info');
+            return;
+        }
+        const lostDeviceIds = broadcasts.map(b => b.deviceId).filter(Boolean);
+        const lostDeviceNames = broadcasts.map(b => b.deviceName).filter(Boolean);
+
+        try {
+            const device = await navigator.bluetooth.requestDevice({
+                acceptAllDevices: true
+            });
+            if (lostDeviceIds.includes(device.id) || lostDeviceNames.includes(device.name)) {
+                showStatus(`発見: ${device.name || '名称なし'}（ID: ${device.id}）は紛失デバイスです！`, 'success');
+                if (navigator.geolocation) {
+                    navigator.geolocation.getCurrentPosition(async (pos) => {
+                        const location = {
+                            lat: pos.coords.latitude,
+                            lng: pos.coords.longitude,
+                            accuracy: pos.coords.accuracy
+                        };
+                        const payload = {
+                            deviceId: device.id,
+                            helperId: getOrCreateUserId(),
+                            location,
+                            timestamp: new Date().toISOString()
+                        };
+                        await fetch(`${BACKEND_URL}/api/help_report`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                        showStatus('協力位置情報を送信しました', 'success');
+                    }, () => {
+                        showStatus('位置情報の取得に失敗しました', 'error');
+                    });
+                }
+            } else {
+                showStatus(`発見したデバイス（${device.name || '名称なし'}）は紛失リストにありません`, 'info');
+            }
+        } catch (e) {
+            showStatus('Bluetoothスキャンがキャンセルされました', 'error');
+        }
+    }
+
     /* ---------- 初期化 ---------- */
     window.addEventListener('load', () => {
         showStatus('スマートトラッカーシステムの準備ができました', 'success');
         const saved = localStorage.getItem('sensorHistory');
         if (saved) sensorHistory = JSON.parse(saved);
-        
+        deviceId = getOrCreateDeviceId();
         initMap();
-        // Bluetooth接続UIのみ表示
         document.getElementById('bluetoothConnectUI').style.display = 'block';
         document.getElementById('permissionRequestUI').style.display = 'none';
         document.getElementById('mainControls').style.display = 'none';
+        if (!document.getElementById('deviceIdDisplay')) {
+            const el = document.createElement('div');
+            el.id = 'deviceIdDisplay';
+            el.style.marginTop = '5px';
+            el.style.fontSize = '0.8rem';
+            el.style.wordBreak = 'break-all';
+            el.style.color = '#334155';
+            el.textContent = `デバイスID: ${deviceId}`;
+            const featureCards = document.getElementsByClassName('feature-card');
+            if (featureCards.length > 1) {
+                featureCards[1].appendChild(el);
+            }
+        }
     });
   </script>
+</body>
+</html>
+
 </body>
 </html>
