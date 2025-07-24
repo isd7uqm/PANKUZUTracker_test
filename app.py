@@ -76,11 +76,32 @@ def analyze_data():
         - 加速度(accel): 最後の移動状態は何か？
         - タイムスタンプ(ts): 最後の記録はいつか？
         これらの情報に基づき、最も可能性の高い場所トップ3を、確率と共に報告してください。
+        回答形式:
+        提供されたセンサーデータの履歴を分析した結果、最も可能性の高い場所トップ3およびその理由を以下に示します。
+        
+        1. 場所1: 緯度[緯度値]、経度[経度値]
+        - 確率: [確率]%
+        - 理由:
+        [具体的な理由を記載]
+        
+        2. 場所2: 緯度[緯度値]、経度[経度値]
+        - 確率: [確率]%
+        - 理由:
+        [具体的な理由を記載]
+        
+        3. 場所3: 緯度[緯度値]、経度[経度値]
+        - 確率: [確率]%
+        - 理由:
+        [具体的な理由を記載]
+        
+        これらの情報に基づいて、デバイスが最も可能性の高い場所を上記の3つとして推定します。
+        
+        注意: 緯度経度は必ず「緯度○○、経度○○」の形式で記載してください。
         """
 
         print("[DEBUG] Calling OpenAI API for analysis...")
         chat_completion = client.chat.completions.create(
-            model="gpt-3.5-turbo", # 使用 gpt-3.5-turbo 进行测试
+            model="gpt-4o-mini", # 使用 gpt-3.5-turbo 进行测试
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
@@ -118,7 +139,7 @@ def get_suggestion():
         
         print("[DEBUG] Calling OpenAI API for suggestion...")
         chat_completion = client.chat.completions.create(
-            model="gpt-3.5-turbo", # 使用 gpt-3.5-turbo 进行测试
+            model="gpt-4o-mini", # 使用 gpt-3.5-turbo 进行测试
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
@@ -131,9 +152,76 @@ def get_suggestion():
         print(f"[ERROR] An error occurred in /api/suggest: {e}")
         return jsonify({"error": f"サーバー内部でエラーが発生しました: {str(e)}"}), 500
 
+@app.route('/api/broadcast', methods=['POST'])
+def broadcast_lost_device():
+    data = request.json
+    device_id = data.get('deviceId', 'unknown')
+    device_name = data.get('deviceName', 'unknown')
+    user_id = data.get('userId', 'anonymous')
+    last_location = data.get('lastKnownLocation', {})
+    timestamp = data.get('timestamp')
+    message = data.get('message', '')
+
+    print(f"[BROADCAST] ユーザー {user_id} がデバイスを紛失: {device_name} @ {last_location} ({timestamp}) メッセージ: {message}")
+
+    # TODO: 暂存在内存（未来建议接 Firebase/数据库）
+    if not hasattr(app, 'broadcasts'):
+        app.broadcasts = []
+
+    app.broadcasts.append({
+        "deviceId": device_id,
+        "deviceName": device_name,
+        "userId": user_id,
+        "lastKnownLocation": last_location,
+        "timestamp": timestamp,
+        "message": message
+    })
+
+    return jsonify({"status": "broadcasted", "message": "紛失情報を記録しました"})
+
+@app.route('/api/broadcasts', methods=['GET'])
+def get_all_broadcasts():
+    """retrieve all lost device broadcasts"""
+    if not hasattr(app, 'broadcasts'):
+        app.broadcasts = []
+    return jsonify(app.broadcasts)
+
+@app.route('/api/help_report', methods=['POST'])
+def help_report():
+    data = request.json
+    device_id = data.get('deviceId')
+    helper_id = data.get('helperId')
+    location = data.get('location', {})
+    timestamp = data.get('timestamp')
+    message = data.get('message', '')
+    if not hasattr(app, 'help_reports'):
+        app.help_reports = []
+    app.help_reports.append({
+        "deviceId": device_id,
+        "helperId": helper_id,
+        "location": location,
+        "timestamp": timestamp,
+        "message": message
+    })
+    return jsonify({"status": "ok"})
+
+@app.route('/api/help_reports', methods=['GET'])
+def get_help_reports():
+    device_id = request.args.get('deviceId')
+    if not hasattr(app, 'help_reports'):
+        app.help_reports = []
+    if device_id:
+        filtered = [r for r in app.help_reports if r['deviceId'] == device_id]
+        return jsonify(filtered)
+    return jsonify(app.help_reports)
+
 @app.route('/')
 def serve_index():
     return send_from_directory(app.static_folder, 'index.html')
+
+@app.route('/src/<path:filename>')
+def serve_src(filename):
+    return send_from_directory('src', filename)
 
 # --- 启动服务器 ---
 if __name__ == '__main__':
