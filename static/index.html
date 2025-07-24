@@ -349,13 +349,21 @@
     function updateRecordCount() { document.getElementById('recordCount').textContent = `ローカル記録数: ${sensorHistory.length}`; }
 
     function classifyMovement(a) {
-        if (!a || a.x === null) return { status: "不明" };
-        const m = Math.sqrt(a.x**2 + a.y**2 + (a.z-9.8)**2);
-        if (m < 0.5) return { status: "静止" };
-        if (m < 2.0) return { status: "歩行" };
-        if (m < 5.0) return { status: "走行" };
-        return { status: "激しい運動" };
-    }
+  if (!a || a.x == null) return { status: "不明" };
+
+  const ax = parseFloat(a.x);
+  const ay = parseFloat(a.y);
+  const az = parseFloat(a.z);
+
+  const magnitude = Math.sqrt(ax*ax + ay*ay + az*az);
+  const dynamic = Math.abs(magnitude - 9.8);   // 重力を除去
+
+  if (dynamic < 0.3)  return { status: "静止" };
+  if (dynamic < 2.0)  return { status: "歩行" };
+  if (dynamic < 4.0)  return { status: "走行" };
+  return { status: "激しい運動" };
+}
+
     
     function analyzePattern() {
         if (sensorHistory.length === 0) return;
