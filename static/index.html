@@ -323,28 +323,36 @@
     function handleLocationError(err) { showStatus(`位置情報エラー: ${err.message}`, 'error'); }
 
     function pushRecord() {
-        if (!sensingActive) return;
-        // ★★★ 変更点: bluetoothConnected フィールドを追加 ★★★
-        const rec = { 
-            ts: new Date().toISOString(), 
-            accel: { ...sensorData.accelerometer }, 
-            loc: { ...sensorData.location },
-            bluetoothConnected: !!connectedDeviceName // true or false
-        };
-        sensorHistory.push(rec);
-        if (sensorHistory.length > HISTORY_LIMIT) sensorHistory.shift();
-        localStorage.setItem('sensorHistory', JSON.stringify(sensorHistory));
-        updateRecordCount();
-        analyzePattern();
-        updateMapMarkers();
-        
-        // --- バックエンドへデータを送信 ---
-        fetch(`${BACKEND_URL}/api/data`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...rec, userId: userId })
-        }).catch(error => console.error('バックエンドへのデータ送信に失敗しました:', error));
+      if (!sensingActive) return;
+    
+      // 计算运动状态
+      const movementObj = classifyMovement(sensorData.accelerometer);
+    
+      const rec = {
+        ts: new Date().toISOString(),
+        accel: { ...sensorData.accelerometer },
+        loc:   { ...sensorData.location },
+        movement: movementObj.status,           // ←★ NEW
+        bluetoothConnected: !!connectedDeviceName,
+      };
+    
+      sensorHistory.push(rec);
+      if (sensorHistory.length > HISTORY_LIMIT) sensorHistory.shift();
+      localStorage.setItem('sensorHistory', JSON.stringify(sensorHistory));
+    
+      updateRecordCount();
+      document.getElementById('movementPattern').innerHTML =
+          `移動パターン: <span class="sensor-value">${movementObj.status}</span>`;
+      updateMapMarkers();
+    
+      /* 送信時も movement を含める */
+      fetch(`${BACKEND_URL}/api/data`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...rec, userId })
+      }).catch(console.error);
     }
+
 
     function updateRecordCount() { document.getElementById('recordCount').textContent = `ローカル記録数: ${sensorHistory.length}`; }
 
